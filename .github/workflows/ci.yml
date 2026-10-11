@@ -1,0 +1,102 @@
+name: FoodSafe CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  # 1. Backend Testing & Verification Job
+  backend-test:
+    name: Backend PyTest Suite
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: foodsafe_user
+          POSTGRES_PASSWORD: foodsafe_pass
+          POSTGRES_DB: foodsafe_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Backend Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-asyncio httpx
+
+      - name: Run Backend PyTest Integration Suite
+        env:
+          DATABASE_URL: postgresql+psycopg://foodsafe_user:foodsafe_pass@localhost:5432/foodsafe_db
+          SECRET_KEY: test-secret-key-for-ci-pipeline-2026
+        run: |
+          cd backend
+          pytest -v
+
+  # 2. Frontend Typecheck & Build Job
+  frontend-build:
+    name: Frontend Production Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Run Frontend Build & TypeScript Check
+        run: npm run build
+
+  # 3. Docker Image Verification Job
+  docker-build:
+    name: Verify Docker Container Builds
+    needs: [backend-test, frontend-build]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: foodsafe-backend:ci
+
+      - name: Build Frontend Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: foodsafe-frontend:ci
